@@ -3,7 +3,7 @@ console.log("started express recipeServer.js")
 if(process.NODE_ENV !== 'production') {
 		require('dotenv').config()
 }
-const uuidv4 = require('uuid/v4');
+const uuidv4 = require('uuidv4');
 const express = require('express');
 const app = express(); 
 const bodyParser = require('body-parser');
