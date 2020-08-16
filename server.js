@@ -49,7 +49,7 @@ app.delete('/recipe-delete', async (req, res, next) => {
 
 app.post('/login', async (req, res) => {
 	
-}
+})
 
 
 //mongoDB requesting fuctions
