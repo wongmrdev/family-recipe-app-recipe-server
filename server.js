@@ -47,6 +47,11 @@ app.delete('/recipe-delete', async (req, res, next) => {
 	res.json(await handleDeleteRecipe( req.body.id))
 })
 
+app.post('/login', async (req, res) => {
+	
+}
+
+
 //mongoDB requesting fuctions
 
 

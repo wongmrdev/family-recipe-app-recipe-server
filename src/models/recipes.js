@@ -4,6 +4,15 @@ const recipesSchema = new mongoose.Schema({
 	
     id: {type: String, required: true },
     name: {type: String, required: [true, "name is required for a Recipe"]},
+    authors: [
+      { id: {type: String, required: true},
+        name: {type: String, required: false, default: ""},
+        email: {type: String, required: false, default: ""}
+      }
+    ],
+    historicalAuthor:  {type: String, required: flase, default: "" },
+    originCountry: {type: String, required: false, default: "" },
+    originWorldRegion: {type: String, required: false, default: ""},
     servings: {type: Number, required: true},
     cookTime: {type: String, required: true},
     instructions: {type: String, required: false},
