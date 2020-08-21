@@ -3,20 +3,27 @@ console.log("started express recipeServer.js")
 if(process.NODE_ENV !== 'production') {
 		require('dotenv').config()
 }
-const uuidv4 = require('uuidv4');
+const { v4: uuidv4 } = require('uuid');
 const express = require('express');
 const app = express(); 
 const bodyParser = require('body-parser');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken')
+var helmet = require('helmet')
+
+app.use(helmet())
 app.use(express.json())
 app.use(function(req, res, next) {
 	res.header("Access-Control-Allow-Origin", "*"); // update to match the domain you will make the request from
-	res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
+	res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
 	res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
 	next();
   });
 
 //connect to mongodb  DATABASE_URL=mongodb://localhost:27017/recipes (already set to recipes database)
 const RecipesModel = require('./src/models/recipes');
+const User = require('./src/models/users');
+const RefreshToken = require('./src/models/refreshTokens');
 const mongoose = require('mongoose');
 mongoose.set('useFindAndModify', false);
 mongoose.connect(process.env.DATABASE_URL, { useNewUrlParser: true, useUnifiedTopology: true } )
@@ -27,8 +34,15 @@ db.once('open', function() {
 })
 
 //routes
-app.get('/recipes', async (req, res) => {
+app.get('/recipes', authenticateToken, async (req, res) => {
+	//req.user available from authenticateToken middleware
+	if(req.isAutheticated == true) {
+	console.log(req.user)
 	res.json(await handleRecipesGet())
+	} else {
+		res.status(403).json({message:"No authorization", success: false})
+	}
+
 })
 
 app.post('/recipe-add', async (req,res,next) => {
@@ -47,14 +61,148 @@ app.delete('/recipe-delete', async (req, res, next) => {
 	res.json(await handleDeleteRecipe( req.body.id))
 })
 
-app.post('/login', async (req, res) => {
+app.post('/api/v1/users/create', async (req, res, next) => {
+	console.log("request body: ", req.body)
+	const yourPassword = req.body.password
+	const salt = await bcrypt.genSalt()
+	const hashedPassword = await bcrypt.hash(yourPassword, salt)
+	// console.log(salt)
+	// console.log(hashedPassword)
+	let newUser = {...req.body, id: uuidv4(), password: hashedPassword, updated: Date.now() }
+	await createUser(res, newUser)
+})
+
+app.delete('/api/v1/users/delete', async (req, res, next) => {
+    // console.log('id:', req.body.id)
+	// console.log(typeof req.body.id)
+		if (typeof req.body.id === 'string') {
+			res.json(await handleDeleteUserById( req.body.id))
+			
+		} else if (typeof req.body.email === 'string') {
+			res.json(await handleDeleteUserByEmail(req.body.email))
+		} else {
+			res.json("Preflight delete error: request body does not contain email or ID")
+		}
+	
+	}
+		
+)
+
+app.post('/api/v1/users/login', async (req, res, next) => {
+	try{
+		if(typeof req.body.email === 'string' && req.body.email !== '' 	
+			&& typeof req.body.password === 'string' && req.body.password !== '') {
+		await handleUserLogin(res, req.body)
+		} else {
+		res.json(("Preflight login error: request body does not contain email or password"))
+		}
+	} catch (error) {
+
+		console.error(error)
+		res.status(500).json(error)
+	}
+})
+
+app.delete('/api/v1/users/logout', async (req, res, next) => {
+	try {
+		if(typeof req.body.username === 'string' && req.body.username !== '') {
+			await handleUserLogout(res, req.body.username)
+
+		} else {
+			res.status(404).json("Preflight logout error: request body does not contain a valid user")
+		}
+	} catch (error) {
+		console.log(error)
+		res.status(500).json(error)
+	}
+})
+
+app.post('/api/v1/users/token', async (req, res, next) => {
+	const refreshToken = req.body.token
+	if (refreshToken == null) {
+		console.log('post request missing refreshToken')
+		return res.status(401).json({message: 'Forbidden missing refreshToken', success: false })
+	}
+	isRefreshTokenValid = handleIsRefreshTokenValid(res, req.body.token)
+	if (!isRefreshTokenValid) return res.status(403).json({message: "invalid refreshToken", success: false})
+	jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET, (err, user) => {
+		if(err) return res.status(403).json({message: "unable to verify refreshtoken", success: false})
+		const accessToken = generateAccessToken({name: user.username})
+		return res.status(200).json({accessToken: accessToken})
+	})
 	
 })
 
-
 //mongoDB requesting fuctions
 
+async function createUser(res, newUser){
+	if(typeof newUser === 'object' && newUser.username && newUser.password && newUser.email) {
+		if(!await User.exists({username: newUser.username})  && !await User.exists({email: newUser.email})) {
+			try {
+				const userAdd = new User(newUser)
+				const payload = await userAdd.save(function (err) {
+					if(err) {return res.send(err)}
+					else {console.log(newUser.username + " saved to users collection")}
+					//saved!
+				console.log(payload)
+					return res.status(201).json({messgae: `user  ${newUser.username} added`, payload: payload, success: true})
+				})
+			} catch (error) {
+				return res.status(500).json(error)
+			}
+		} else if (await User.exists({username: newUser.username})==true) { 
+			console.log(`user ${newUser.username} was submitted to the server but already exists`)
+			return res.status(409).json({message: "username already exists!", success: false, reason: "username exists"})
+		} else if (await User.exists({email: newUser.email})==true) { 
+			console.log(`email ${newUser.email} was submitted to the server but already exists`)
+			return res.status(409).json({message: "email already exists!", success: false, reason: "email exists"})
+		}
+	} else {
+		return res.status(400).json("createUser() error: there is a problem with the user object datatype or a missing property (username, password, email)")
+	}
+}
 
+async function handleDeleteUserById(userId){
+	let filter = {id: userId}
+    console.log("userId:", userId)
+    console.log("filter:", filter)
+	if(typeof userId === 'string' && userId !== '') {
+		if(userId) {
+			try {
+				let userIdToDelete = await User.deleteOne(filter)
+                console.log(userIdToDelete)
+                return userIdToDelete
+			} catch (error) {
+				return error
+			}
+		} else {
+			return  "no user.id recieved"
+		}
+	}	else {
+		return "id is not a string"
+	}	
+}
+
+async function handleDeleteUserByEmail(userEmail){
+	let filter = {email: userEmail}
+    console.log("userEmail:", userEmail)
+    console.log("filter:", filter)
+	if(typeof userEmail === 'string' && userEmail !== '') {
+		if(userEmail) {
+			try {
+				let userEmailToDelete = await User.deleteMany(filter)
+                console.log(userEmailToDelete)
+                return userEmailToDelete
+			} catch (error) {
+				return error
+			}
+		} else {
+			return  "no email recieved"
+		}
+	}	else {
+		return "email is not a string"
+	}	
+}
 async function handleDeleteRecipe(recipeId){
 	let filter = {id: recipeId}
     console.log("recipeId:", recipeId)
@@ -102,7 +250,7 @@ async function handlePostRecipeAdd(res, newRecipe) {
 
             })  
 		} catch (error) {
-			return error
+			return res.json(error)
 		}
 	} else if (await RecipesModel.exists({id: newRecipe.id})==true){
 		return  res.json("id exists already!")
@@ -125,4 +273,96 @@ async function handlePostRecipeUpsert(filter, update) {
 	}
 }
 
+//login
+
+async function handleUserLogin(res, body) {
+	if(typeof body === 'object' && body.email && body.password ) {
+		if( await User.exists({email: body.email})) {
+			try{
+				const query =  await User.find({email: body.email}, "username")
+				const username = query[0].username
+				console.log(`username ${username}`)
+				const user = {username: username}
+				const accessToken =	generateAccessToken(user)
+				const refreshToken = jwt.sign(user, process.env.REFRESH_TOKEN_SECRET)
+				user.refreshToken = refreshToken
+				user.id = uuidv4()
+				//PUSH REFRESH TOKEN TO DATABASE 
+				const refreshTokenObject = new RefreshToken(user)
+				//this will finish saving after the response is sent back to the requester
+				payload =  await refreshTokenObject.save(function (err) {
+					if(err) { 
+						console.log(err) 
+						return res.send(err)
+					}
+					console.log(user.username + " refreshToken saved to collection")
+					//saved!
+					console.log(`successful refreshTokenSave with payload: ${refreshTokenObject}`)
+					})
+				
+						
+				console.log(`${body.email} ${username} authenticated`)
+				return res.status(200).json({messgae: `user  ${body.email} authenticated`, success: true, accessToken: accessToken, refreshToken: refreshToken})
+			} catch (error) {
+				console.log(error)
+				return res.status(500).json({message: `handleUserLogin failed for ${user.username}`, success: false})
+			}
+		} else if (!User.exists({email: body.email})===false) { 
+			console.log(`email ${body.email} was submitted to the server cant find that user's email`)
+			return res.status(404).json({message: "email doesn't exists!", success: false, reason: "cannot find user"})
+		}
+	} else {
+		return res.status(400).json("handleUserLogin() error: there is a problem with the user object datatype or a missing property (username, password, email, etc)")
+	}
+}
+
+async function handleUserLogout(res, username) {
+	const tokenDelete = await RefreshToken.deleteMany({username: username}, function (err) {
+		if(err) { 
+					console.log(err) 
+					return res.send(err)
+				}
+		})
+	return res.status(200).json({message: tokenDelete, success: true})
+	console.log(user.username + " refreshToken(s) removed from collection")
+	
+}
+
+function authenticateToken(req, res, next) {
+	//console.log("req", req)
+	console.log("headers", req.headers)
+	if(req.headers.authorization) {
+		const authHeader = req.headers['authorization']
+		const token = authHeader && authHeader.split(' ')[1] 
+		if (token == null) {
+			req.isAutheticated = false
+			return res.status(401)	 
+		} else {
+			jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, user) => {
+				if (err) {
+					console.log(err)
+					req.isAutheticated = false
+					return res.status(403).json({message: "Token no longer valid"})
+				} else {
+					req.user = user
+					req.isAutheticated = true
+					next()
+				}
+
+			})
+		}
+	} else { console.log('no authorization header') 
+	req.isAutheticated = false
+	next()
+	 }
+}
+
+function generateAccessToken(user) {
+	return jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {expiresIn: '36000m'})
+}
+
+function handleIsRefreshTokenValid(res, refreshToken) {
+	return true
+	next()
+}
 app.listen( process.env.PORT || 3000)
