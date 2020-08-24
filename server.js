@@ -4,22 +4,28 @@ if(process.NODE_ENV !== 'production') {
 		require('dotenv').config()
 }
 const { v4: uuidv4 } = require('uuid');
+const session = require('cookie-session') //helper package for setting cookies in response object
 const express = require('express');
+const cookieParser = require('cookie-parser'); // in order to read cookie sent from client
+
 const app = express(); 
 const bodyParser = require('body-parser');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken')
 var helmet = require('helmet')
 
-app.use(helmet())
+app.use(helmet()) //express recommended security package
 app.use(express.json())
+app.use(cookieParser()) //parse client req cookies (unsigned and signed)
 app.use(function(req, res, next) {
-	res.header("Access-Control-Allow-Origin", "*"); // update to match the domain you will make the request from
+	res.header("Access-Control-Allow-Origin", process.env.ALLOWED_SERVER_ORIGIN ); // update to match the domain you will make the request from
 	res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
 	res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
-	next();
-  });
-
+	res.header("Access-Control-Allow-Credentials", true)
+	next();	
+  }); //set response headers
+  
+var expiryDate = new Date(Date.now() + 60 * 60 * 1000) // 1 hour
 //connect to mongodb  DATABASE_URL=mongodb://localhost:27017/recipes (already set to recipes database)
 const RecipesModel = require('./src/models/recipes');
 const User = require('./src/models/users');
@@ -35,6 +41,7 @@ db.once('open', function() {
 
 //routes
 app.get('/recipes', authenticateToken, async (req, res) => {
+	console.log("cookies: ", req.cookies)
 	//req.user available from authenticateToken middleware
 	if(req.isAutheticated == true) {
 	console.log(req.user)
@@ -89,19 +96,23 @@ app.delete('/api/v1/users/delete', async (req, res, next) => {
 )
 
 app.post('/api/v1/users/login', async (req, res, next) => {
-	try{
+	try {
 		if(typeof req.body.email === 'string' && req.body.email !== '' 	
 			&& typeof req.body.password === 'string' && req.body.password !== '') {
 		await handleUserLogin(res, req.body)
 		} else {
-		res.json(("Preflight login error: request body does not contain email or password"))
+		return res.json({message: "Preflight login error: request body does not contain email or password", success: false})
 		}
 	} catch (error) {
-
-		console.error(error)
-		res.status(500).json(error)
+		console.log(error)
+		return res.status(500).json({message: "error in API endpoint", success: false})
 	}
+		
+	
 })
+
+
+
 
 app.delete('/api/v1/users/logout', async (req, res, next) => {
 	try {
@@ -276,9 +287,9 @@ async function handlePostRecipeUpsert(filter, update) {
 //login
 
 async function handleUserLogin(res, body) {
+	
 	if(typeof body === 'object' && body.email && body.password ) {
 		if( await User.exists({email: body.email})) {
-			try{
 				const query =  await User.find({email: body.email}, "username")
 				const username = query[0].username
 				console.log(`username ${username}`)
@@ -290,7 +301,7 @@ async function handleUserLogin(res, body) {
 				//PUSH REFRESH TOKEN TO DATABASE 
 				const refreshTokenObject = new RefreshToken(user)
 				//this will finish saving after the response is sent back to the requester
-				payload =  await refreshTokenObject.save(function (err) {
+				payload =  refreshTokenObject.save(function (err) {
 					if(err) { 
 						console.log(err) 
 						return res.send(err)
@@ -299,21 +310,25 @@ async function handleUserLogin(res, body) {
 					//saved!
 					console.log(`successful refreshTokenSave with payload: ${refreshTokenObject}`)
 					})
-				
-						
+			
 				console.log(`${body.email} ${username} authenticated`)
-				return res.status(200).json({messgae: `user  ${body.email} authenticated`, success: true, accessToken: accessToken, refreshToken: refreshToken})
-			} catch (error) {
-				console.log(error)
-				return res.status(500).json({message: `handleUserLogin failed for ${user.username}`, success: false})
-			}
-		} else if (!User.exists({email: body.email})===false) { 
+				return res
+					.status(200)
+					.cookie('access_token', 'Bearer ' + accessToken, {
+						maxAge: 86400000,
+						httpOnly: true
+						})
+					.json({messgae: `user  ${body.email} authenticated`, success: true})
+					
+			
+		} else if (!await User.exists({email: body.email})===false) { 
 			console.log(`email ${body.email} was submitted to the server cant find that user's email`)
 			return res.status(404).json({message: "email doesn't exists!", success: false, reason: "cannot find user"})
-		}
-	} else {
-		return res.status(400).json("handleUserLogin() error: there is a problem with the user object datatype or a missing property (username, password, email, etc)")
 	}
+	else {
+		return res.status(400).json({message: "handleUserLogin() error: there is a problem with the user object datatype or a missing property (username, password, email, etc)", success: false})
+	}
+}
 }
 
 async function handleUserLogout(res, username) {
@@ -330,18 +345,21 @@ async function handleUserLogout(res, username) {
 
 function authenticateToken(req, res, next) {
 	//console.log("req", req)
-	console.log("headers", req.headers)
-	if(req.headers.authorization) {
-		const authHeader = req.headers['authorization']
-		const token = authHeader && authHeader.split(' ')[1] 
+	console.log("cookies", req.cookies.access_token)
+	if(req.cookies.access_token) {
+		const authCookie = req.cookies.access_token
+		const token = authCookie && authCookie.split(' ')[1] 
 		if (token == null) {
 			req.isAutheticated = false
+			req.success = false
+			req.cookie('')
 			return res.status(401)	 
 		} else {
 			jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, user) => {
 				if (err) {
 					console.log(err)
 					req.isAutheticated = false
+					req.cookie('')
 					return res.status(403).json({message: "Token no longer valid"})
 				} else {
 					req.user = user
@@ -351,10 +369,11 @@ function authenticateToken(req, res, next) {
 
 			})
 		}
-	} else { console.log('no authorization header') 
-	req.isAutheticated = false
-	next()
-	 }
+	} else { 
+			console.log('no authorization header') 
+			req.isAutheticated = false
+			next()
+	}
 }
 
 function generateAccessToken(user) {
