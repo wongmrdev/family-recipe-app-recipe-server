@@ -13,13 +13,13 @@ const bodyParser = require('body-parser');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken')
 var helmet = require('helmet')
-
+console.log("ALLOWED_SERVER_ORIGIN:", process.env.ALLOWED_SERVER_ORIGIN)
 app.use(helmet()) //express recommended security package
 app.use(express.json())
 app.use(cookieParser()) //parse client req cookies (unsigned and signed)
 app.use(function(req, res, next) {
 	res.header("Access-Control-Allow-Origin", process.env.ALLOWED_SERVER_ORIGIN ); // update to match the domain you will make the request from
-	res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+	res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
 	res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
 	res.header("Access-Control-Allow-Credentials", true)
 	next();	
@@ -315,7 +315,7 @@ async function handleUserLogin(res, body) {
 				return res
 					.status(200)
 					.cookie('access_token', 'Bearer ' + accessToken, {
-						maxAge: 86400000,
+						maxAge: expiryDate,
 						httpOnly: true
 						})
 					.json({messgae: `user  ${body.email} authenticated`, success: true})
@@ -370,7 +370,7 @@ function authenticateToken(req, res, next) {
 			})
 		}
 	} else { 
-			console.log('no authorization header') 
+			console.log('no cookie jwt') 
 			req.isAutheticated = false
 			next()
 	}
