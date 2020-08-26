@@ -13,12 +13,13 @@ const bodyParser = require('body-parser');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken')
 var helmet = require('helmet')
-console.log("ALLOWED_SERVER_ORIGIN:", process.env.ALLOWED_SERVER_ORIGIN)
+console.log("ALLOWED_SERVER_ORIGIN:", `${process.env.ALLOWED_SERVER_ORIGIN}`)
 app.use(helmet()) //express recommended security package
 app.use(express.json())
 app.use(cookieParser()) //parse client req cookies (unsigned and signed)
+console.log(process.env.ALLOWED_SERVER_ORIGIN, typeof process.env.ALLOWED_SERVER_ORIGIN, process.env.ALLOWED_SERVER_ORIGIN.toString())
 app.use(function(req, res, next) {
-	res.header("Access-Control-Allow-Origin", process.env.ALLOWED_SERVER_ORIGIN ); // update to match the domain you will make the request from
+	res.header("Access-Control-Allow-Origin", `${process.env.ALLOWED_SERVER_ORIGIN}` ); // update to match the domain you will make the request from
 	res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
 	res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
 	res.header("Access-Control-Allow-Credentials", true)
