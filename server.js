@@ -319,7 +319,8 @@ async function handleUserLogin(res, body) {
 					.cookie('access_token', 'Bearer ' + accessToken, {
 						maxAge: expiryDate,
 						httpOnly: true,
-						sameSite: 'None'
+						sameSite: 'None',
+						secure: true
 						})
 					.json({messgae: `user  ${body.email} authenticated`, success: true})
 					
