@@ -72,13 +72,20 @@ app.delete('/recipe-delete', async (req, res, next) => {
 
 app.post('/api/v1/users/create', async (req, res, next) => {
 	console.log("request body: ", req.body)
+	console.log("request password:", req.body.password)
 	const yourPassword = req.body.password
-	const salt = await bcrypt.genSalt()
-	const hashedPassword = await bcrypt.hash(yourPassword, salt)
-	// console.log(salt)
-	// console.log(hashedPassword)
-	let newUser = {...req.body, id: uuidv4(), password: hashedPassword, updated: Date.now() }
-	await createUser(res, newUser)
+	try {
+		const salt = await bcrypt.genSalt()
+		const hashedPassword = await bcrypt.hash(yourPassword, salt)
+		// console.log(salt)
+		// console.log(hashedPassword)
+		let newUser = {...req.body, id: uuidv4(), password: hashedPassword, updated: Date.now() }
+		await createUser(res, newUser)
+	}
+	catch (err) {
+			console.log(err)
+			res.send(500).json({message: "server couldn't process your request", success: false})
+		}
 })
 
 app.delete('/api/v1/users/delete', async (req, res, next) => {
@@ -157,7 +164,7 @@ async function createUser(res, newUser){
 					if(err) {return res.send(err)}
 					else {console.log(newUser.username + " saved to users collection")}
 					//saved!
-				console.log(payload)
+				console.log(payload) //undefined
 					return res.status(201).json({messgae: `user  ${newUser.username} added`, payload: payload, success: true})
 				})
 			} catch (error) {
@@ -291,29 +298,31 @@ async function handlePostRecipeUpsert(filter, update) {
 async function handleUserLogin(res, body) {
 	
 	if(typeof body === 'object' && body.email && body.password ) {
-		if( await User.exists({email: body.email})) {
-				const query =  await User.find({email: body.email}, "username")
-				const username = query[0].username
-				console.log(`username ${username}`)
-				const user = {username: username}
-				const accessToken =	generateAccessToken(user)
-				const refreshToken = jwt.sign(user, process.env.REFRESH_TOKEN_SECRET)
-				user.refreshToken = refreshToken
-				user.id = uuidv4()
+		const user =  await User.find({email: body.email}, "username password")
+		console.log("handleUserLogin, user: ", user)
+		console.log("handleUserLogin, body.password", body.password)
+		if(user[0].username) {
+				if (!await bcrypt.compare(body.password, user[0].password)) return res.status(400).json({message: "passwords dont match", success: false})
+				console.log(`username: ${user[0].username}`)
+				const tokenBody = {username: user[0].username}
+				const accessToken =	generateAccessToken(tokenBody)
+				const refreshToken = jwt.sign(tokenBody, process.env.REFRESH_TOKEN_SECRET)
+				tokenBody.refreshToken = refreshToken
+				tokenBody.id = uuidv4()
 				//PUSH REFRESH TOKEN TO DATABASE 
-				const refreshTokenObject = new RefreshToken(user)
+				const refreshTokenObject = new RefreshToken(tokenBody)
 				//this will finish saving after the response is sent back to the requester
 				payload =  refreshTokenObject.save(function (err) {
 					if(err) { 
 						console.log(err) 
 						return res.send(err)
 					}
-					console.log(user.username + " refreshToken saved to collection")
+					console.log(user[0].username + " refreshToken saved to collection")
 					//saved!
 					console.log(`successful refreshTokenSave with payload: ${refreshTokenObject}`)
 					})
 			
-				console.log(`${body.email} ${username} authenticated`)
+				console.log(`${body.email} ${user[0].username} authenticated`)
 				return res
 					.status(200)
 					.cookie('access_token', 'Bearer ' + accessToken, {
