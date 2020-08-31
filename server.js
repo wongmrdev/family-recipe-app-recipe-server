@@ -27,7 +27,7 @@ app.use(function(req, res, next) {
 	next();	
   }); //set response headers
   
-var expiryDate = new Date(Date.now() + 60 * 60 * 1000) // 1 hour
+var expiryDate = new Date(Date.now() + 15 * 1000) // 1 hour
 //connect to mongodb  DATABASE_URL=mongodb://localhost:27017/recipes (already set to recipes database)
 const RecipesModel = require('./src/models/recipes');
 const User = require('./src/models/users');
