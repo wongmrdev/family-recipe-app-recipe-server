@@ -10,8 +10,11 @@ const usersSchema = new mongoose.Schema({
     country: { type: String, required: false, default: "" },
     email: { type: String, required: true, default: ""},
     familyMembers: {type: [String], required: true},
-    phoneNumber: {type: String, required: false, default: ""}
-  
+    phoneNumber: {type: String, required: false, default: ""},
+    OTP: {
+            value: {type: String, required: false}, 
+            expires: {type: Date, required: true, default: Date.now() + 10 * 1000}
+        }
 })
 //export model(<name of Model constructor>, <schema data definition>, <collection to save to>)
 module.exports = mongoose.model('User', usersSchema, 'users')

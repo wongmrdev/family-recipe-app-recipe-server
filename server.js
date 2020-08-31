@@ -7,6 +7,7 @@ const { v4: uuidv4 } = require('uuid');
 const session = require('cookie-session') //helper package for setting cookies in response object
 const express = require('express');
 const cookieParser = require('cookie-parser'); // in order to read cookie sent from client
+const axios = require('axios');
 
 const app = express(); 
 const bodyParser = require('body-parser');
@@ -33,6 +34,7 @@ const RecipesModel = require('./src/models/recipes');
 const User = require('./src/models/users');
 const RefreshToken = require('./src/models/refreshTokens');
 const mongoose = require('mongoose');
+const { create } = require('./src/models/recipes');
 mongoose.set('useFindAndModify', false);
 mongoose.connect(process.env.DATABASE_URL, { useNewUrlParser: true, useUnifiedTopology: true } )
 const db = mongoose.connection
@@ -43,8 +45,9 @@ db.once('open', function() {
 
 //routes
 app.get('/', (req,res) => {
-	res.send('You have reached the server backend, are you looking for https://https://ironmancct-2-learn-react-today.herokuapp.com ?')
+	res.send('You have reached the server backend, are you looking for <a href="https://ironmancct-2-learn-react-today.herokuapp.com">https://ironmancct-2-learn-react-today.herokuapp.com</a> ?')
 })
+
 app.get('/recipes', authenticateToken, async (req, res) => {
 	console.log("cookies: ", req.cookies)
 	//req.user available from authenticateToken middleware
@@ -72,6 +75,52 @@ app.delete('/recipe-delete', async (req, res, next) => {
     console.log(typeof req.body.id)
 	res.json(await handleDeleteRecipe( req.body.id))
 })
+app.post('/api/v1/users/verify-email', async (req, res, next) => {
+	try{
+		req.body.OTP = createOTP()
+		await handleSaveOTPtoUsers({email: req.body.email}, {OTP: req.body.OTP})
+		res.status(200).send()
+		//await handleEmailOTP(req, res)
+	} catch (err) {
+		console.log(err)
+		res.status(500).send()
+	}
+})
+
+function createOTP() {
+	let OTP = { 
+				value: Math.floor(Math.random()* 1000000).toString().padStart(6, "0"),
+				expires: Date.now() + 60*1000
+			  }
+	console.log('OTP: ', OTP)
+	return OTP
+}
+
+async function handleSaveOTPtoUsers(filter, update) {
+	if(update) {
+		try {
+			let OTPUpsert = await User.updateOne(filter, update)
+			return OTPUpsert
+		} catch (error) {
+			return error
+		}
+	} else {
+		return  "no body message recieved"
+	}
+
+}
+
+// async function handleEmailOTP(req, res) {
+// 	axios ({
+// 		method: 'post',
+// 		url: `${process.env.EMAIL_SMTP_SERVER_DOMAIN}/send-email-verification-code`,
+// 		data: {username: req.body.username, email: req.body.email, message: req.body.message}
+// 		})
+// 		.then(response => console.log(response))
+// 		.catch(err=>console.log(err))
+// 		return res.status(200).send()
+// }
+
 
 app.post('/api/v1/users/create', async (req, res, next) => {
 	console.log("request body: ", req.body)
