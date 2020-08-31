@@ -42,6 +42,9 @@ db.once('open', function() {
 })
 
 //routes
+app.get('/', (req,res) => {
+	res.send('You have reached the server backend, are you looking for https://https://ironmancct-2-learn-react-today.herokuapp.com ?')
+})
 app.get('/recipes', authenticateToken, async (req, res) => {
 	console.log("cookies: ", req.cookies)
 	//req.user available from authenticateToken middleware
