@@ -28,7 +28,7 @@ app.use(function(req, res, next) {
 	next();	
   }); //set response headers
   
-var expiryDate = new Date(Date.now() + 15 * 1000) // 1 hour
+var expiryDate = new Date(Date.now() + 24 * 7 * 60 * 60 * 1000) // 1 week
 //connect to mongodb  DATABASE_URL=mongodb://localhost:27017/recipes (already set to recipes database)
 const RecipesModel = require('./src/models/recipes');
 const User = require('./src/models/users');
@@ -64,7 +64,8 @@ app.post('/recipe-add', async (req,res,next) => {
 	let newRecipe = { updated: Date.now(), ...req.body }
 	await handlePostRecipeAdd(res, newRecipe)
 })
-app.post('/recipe-upsert', async (req,res,next) => {
+app.post('/recipe-upsert', authenticateToken, async (req,res,next) => {
+	if(req.isAutheticated===false) return res.status(403).json({success: false, message: "no authorization"})
 	let filter = {id: req.body.id}
 	let update = { updated: Date.now(), ...req.body }
 	res.json(await handlePostRecipeUpsert(filter,update))
@@ -353,7 +354,7 @@ async function handleUserLogin(res, body) {
 		const user =  await User.find({email: body.email}, "username password")
 		console.log("handleUserLogin, user: ", user)
 		console.log("handleUserLogin, body.password", body.password)
-		if(user[0].username) {
+		if(user.length > 0) {
 				if (!await bcrypt.compare(body.password, user[0].password)) return res.status(400).json({message: "passwords dont match", success: false})
 				console.log(`username: ${user[0].username}`)
 				const tokenBody = {username: user[0].username}
@@ -375,13 +376,14 @@ async function handleUserLogin(res, body) {
 					})
 			
 				console.log(`${body.email} ${user[0].username} authenticated`)
+				
 				return res
 					.status(200)
 					.cookie('access_token', 'Bearer ' + accessToken, {
 						maxAge: expiryDate,
 						httpOnly: true,
 						sameSite: 'None',
-						secure: true
+						secure: IS_HTTP_RES_COOKIE_SECURE
 						})
 					.json({messgae: `user  ${body.email} authenticated`, success: true})
 					

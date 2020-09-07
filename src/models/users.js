@@ -13,7 +13,7 @@ const usersSchema = new mongoose.Schema({
     phoneNumber: {type: String, required: false, default: ""},
     OTP: {
             value: {type: String, required: false}, 
-            expires: {type: Date, required: true, default: Date.now() + 10 * 1000}
+            expires: {type: Date, required: true, default: Date.now() + 60 * 1000}
         }
 })
 //export model(<name of Model constructor>, <schema data definition>, <collection to save to>)
