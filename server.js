@@ -28,7 +28,7 @@ app.use(function(req, res, next) {
 	next();	
   }); //set response headers
   
-var expiryDate = new Date(Date.now() + 24 * 7 * 60 * 60 * 1000) // 1 week
+var expiryDate = 24 * 7 * 60 * 60 * 1000 // 1 week
 //connect to mongodb  DATABASE_URL=mongodb://localhost:27017/recipes (already set to recipes database)
 const RecipesModel = require('./src/models/recipes');
 const User = require('./src/models/users');
@@ -376,15 +376,26 @@ async function handleUserLogin(res, body) {
 					})
 			
 				console.log(`${body.email} ${user[0].username} authenticated`)
-				
-				return res
-					.status(200)
-					.cookie('access_token', 'Bearer ' + accessToken, {
+				let cookieOptions = {}
+				if(process.env.NODE_ENV !== 'production') {
+					cookieOptions = {
+					maxAge: expiryDate,
+					// httpOnly: process.env.IS_HTTP_RES_COOKIE_HTTP_ONLY,
+					// sameSite: 'None',
+					// secure: process.env.IS_HTTP_RES_COOKIE_SECURE
+					}
+				}
+				else {
+					cookieOptions = {
 						maxAge: expiryDate,
 						httpOnly: true,
 						sameSite: 'None',
-						secure: IS_HTTP_RES_COOKIE_SECURE
-						})
+						secure: true
+						}
+				}
+				return res
+					.status(200)
+					.cookie('access_token', 'Bearer ' + accessToken, cookieOptions)
 					.json({messgae: `user  ${body.email} authenticated`, success: true})
 					
 			
