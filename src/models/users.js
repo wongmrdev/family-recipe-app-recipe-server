@@ -11,9 +11,9 @@ const usersSchema = new mongoose.Schema({
     email: { type: String, required: true, default: ""},
     familyMembers: {type: [String], required: true},
     phoneNumber: {type: String, required: false, default: ""},
-    OTP: {
-            value: {type: String, required: false}, 
-            expires: {type: Date, required: true, default: Date.now() + 60 * 1000}
+    verified: {
+            email: {type: Boolean, required: true, default: false}, 
+            phone: {type: Boolean, required: true, default: false}
         }
 })
 //export model(<name of Model constructor>, <schema data definition>, <collection to save to>)

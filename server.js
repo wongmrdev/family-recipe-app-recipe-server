@@ -4,23 +4,52 @@ if(process.env.NODE_ENV !== 'production') {
 		require('dotenv').config()
 }
 const { v4: uuidv4 } = require('uuid');
-const session = require('cookie-session') //helper package for setting cookies in response object
+const session = require('cookie-session'); //helper package for setting cookies in response object
 const express = require('express');
 const cookieParser = require('cookie-parser'); // in order to read cookie sent from client
 const axios = require('axios');
+//protect api-endpoint from multiple requests from the same ip
 
+const rateLimit = require('express-rate-limit'); 
+function limiter(windowMs, maxRequests) {
+	const newLimiter = rateLimit({
+	windowMs:  windowMs,
+	max: maxRequests
+})
+return newLimiter
+}
+//protect api-endpoint from multiple requests from the same ip
+const slowDown = require('express-slow-down')
+function speedLimiter(windowMs, delayAfter, delayMs) {
+	const speedLimiter = slowDown({
+		windowMs,
+		delayAfter,
+		delayMs
+	})
+	return speedLimiter
+} 
+
+//Other options to improve performance is to Cache Results 
+//Other options to improce security is to limit requests based on username, API KEY, or JWT
 const app = express(); 
 const bodyParser = require('body-parser');
 const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken')
-var helmet = require('helmet')
-console.log("ALLOWED_SERVER_ORIGIN:", `${process.env.ALLOWED_SERVER_ORIGIN}`)
+const jwt = require('jsonwebtoken');
+var helmet = require('helmet');
+
 app.use(helmet()) //express recommended security package
 app.use(express.json())
 app.use(cookieParser()) //parse client req cookies (unsigned and signed)
-console.log(process.env.ALLOWED_SERVER_ORIGIN, typeof process.env.ALLOWED_SERVER_ORIGIN, process.env.ALLOWED_SERVER_ORIGIN.toString())
+console.log("ALLOWED_SERVER_ORIGIN", process.env.ALLOWED_SERVER_ORIGIN)
+console.log("EMAIL_SMTP_SERVER_DOMAIN", process.env.EMAIL_SMTP_SERVER_DOMAIN)
 app.use(function(req, res, next) {
-	res.header("Access-Control-Allow-Origin", `${process.env.ALLOWED_SERVER_ORIGIN}` ); // update to match the domain you will make the request from
+	const corsWhitelist = [
+        `${process.env.ALLOWED_SERVER_ORIGIN}`,
+        `${process.env.EMAIL_SMTP_SERVER_DOMAIN}`
+	];
+	if (corsWhitelist.indexOf(req.headers.origin) !== -1) {
+		res.header("Access-Control-Allow-Origin", req.headers.origin); // update to match the domain you will make the request from
+	}
 	res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
 	res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
 	res.header("Access-Control-Allow-Credentials", true)
@@ -33,6 +62,8 @@ var expiryDate = 24 * 7 * 60 * 60 * 1000 // 1 week
 const RecipesModel = require('./src/models/recipes');
 const User = require('./src/models/users');
 const RefreshToken = require('./src/models/refreshTokens');
+const EmailVerification = require('./src/models/email-verification')
+
 const mongoose = require('mongoose');
 const { create } = require('./src/models/recipes');
 mongoose.set('useFindAndModify', false);
@@ -44,7 +75,7 @@ db.once('open', function() {
 })
 
 //routes
-app.get('/', (req,res) => {
+app.get('/', (req,res) => { 
 	res.send('You have reached the server backend, are you looking for <a href="https://ironmancct-2-learn-react-today.herokuapp.com">https://ironmancct-2-learn-react-today.herokuapp.com</a> ?')
 })
 
@@ -53,7 +84,7 @@ app.get('/recipes', authenticateToken, async (req, res) => {
 	//req.user available from authenticateToken middleware
 	if(req.isAutheticated == true) {
 	console.log(req.user)
-	res.json(await handleRecipesGet())
+	res.json({recipes: await handleRecipesGet(), success: true})
 	} else {
 		res.status(403).json({message:"No authorization", success: false})
 	}
@@ -76,11 +107,19 @@ app.delete('/recipe-delete', async (req, res, next) => {
     console.log(typeof req.body.id)
 	res.json(await handleDeleteRecipe( req.body.id))
 })
-app.post('/api/v1/users/verify-email', async (req, res, next) => {
+app.post('/api/v1/users/verify-email', limiter((30 * 1000), 2),  async (req, res, next) => {
 	try{
-		req.body.OTP = createOTP()
-		await handleSaveOTPtoUsers({email: req.body.email}, {OTP: req.body.OTP})
-		res.status(200).send()
+		console.log("creating OTP")
+		OTP = createOTP()
+		let data = {
+			email: req.body.email,
+			id: uuidv4(),
+			verificationCode: OTP,
+			expiration: Date.now() + 1000 * 60 * 60 * 24
+		}
+		let saveOTPToBackend = await handleSaveOTPtoEmailVerification(data)
+		let emailOTPToUser = await handleEmailOTPToUser(data, res)
+		res.status(200).send({saveOTPToBackend, emailOTPToUser})
 		//await handleEmailOTP(req, res)
 	} catch (err) {
 		console.log(err)
@@ -89,19 +128,25 @@ app.post('/api/v1/users/verify-email', async (req, res, next) => {
 })
 
 function createOTP() {
-	let OTP = { 
-				value: Math.floor(Math.random()* 1000000).toString().padStart(6, "0"),
-				expires: Date.now() + 60*1000
-			  }
+	let OTP = Math.floor(Math.random()* 1000000).toString().padStart(6, "0")
 	console.log('OTP: ', OTP)
 	return OTP
 }
 
-async function handleSaveOTPtoUsers(filter, update) {
-	if(update) {
+async function handleSaveOTPtoEmailVerification(data) {
+	if(data && data.email !=='') {
 		try {
-			let OTPUpsert = await User.updateOne(filter, update)
-			return OTPUpsert
+			console.log(data)
+			let filter = {email: data.email}
+			console.log(filter)
+			let doc = data
+			let options = { new: false, upsert: true } 
+			let verificationCodeUpdated = await EmailVerification.findOneAndUpdate(filter, doc, options, function (err, result) {
+				if (err) return console.error(err);
+				
+				console.log(result)
+			})
+			return verificationCodeUpdated
 		} catch (error) {
 			return error
 		}
@@ -111,17 +156,46 @@ async function handleSaveOTPtoUsers(filter, update) {
 
 }
 
-// async function handleEmailOTP(req, res) {
-// 	axios ({
-// 		method: 'post',
-// 		url: `${process.env.EMAIL_SMTP_SERVER_DOMAIN}/send-email-verification-code`,
-// 		data: {username: req.body.username, email: req.body.email, message: req.body.message}
-// 		})
-// 		.then(response => console.log(response))
-// 		.catch(err=>console.log(err))
-// 		return res.status(200).send()
-// }
+async function handleEmailOTPToUser(data, res) {
+	console.log("sending OTP email...")
+	let response = axios ({
+		method: 'post',
+		url: `${process.env.EMAIL_SMTP_SERVER_DOMAIN}/send-email-verification-code`,
+		data: data
+		})
+	.then(response => console.log(response.config))
+	.catch(err=>console.log(err))
+	return response
+}
 
+app.post('/api/v1/users/verification-code', limiter((10 * 60 * 1000), 20), speedLimiter(10 * 60 * 1000, 10, 500), async (req, res) => {
+	console.log(req.body)
+	if(req.body === null  || req.body.email === '' || req.body.verificationCode === '') return res.status(400).json({message: "bad request", success: false })
+	try {
+		//check client verification code against server verification code
+		let filter = {email: req.body.email} 
+		let serverVerificationCode = await EmailVerification.findOne(filter, function(err, doc) {
+			if(err) return res.status(400).json({message: 'no user verification code', success: false})
+		})
+		console.log(serverVerificationCode)
+		if (serverVerificationCode === null) return res.status(400).json({message: 'no email-verification-code pair exists, request email verification', success: false})
+		console.log(serverVerificationCode.verificationCode)
+		if (serverVerificationCode.verificationCode === req.body.verificationCode.toString().trim()) {
+			let update = {verified: {email: true}}
+			let userVerifiedEmailUpdate = await User.findOneAndUpdate(filter, update,  function(err, doc) {
+				if(err) return res.status(500).json({message: 'error updating User verified email', success: false})
+			})
+			if(userVerifiedEmailUpdate === null) return res.status(400).json({message: "User does not exist", success: false })
+			await handleDeleteEmailVerificationByEmail(req.body.email)
+			return res.status(200).json({message: "email verified", success: true })
+		} else {
+			return res.status(404).json({message: "verification code does not match", success: false })
+		}
+	} catch (err) {
+		console.log(err)
+		res.status(500).send(err)
+	}
+})
 
 app.post('/api/v1/users/create', async (req, res, next) => {
 	console.log("request body: ", req.body)
@@ -276,6 +350,28 @@ async function handleDeleteUserByEmail(userEmail){
 		return "email is not a string"
 	}	
 }
+
+async function handleDeleteEmailVerificationByEmail(userEmail){
+	let filter = {email: userEmail}
+    console.log("userEmail:", userEmail)
+    console.log("filter:", filter)
+	if(typeof userEmail === 'string' && userEmail !== '') {
+		if(userEmail) {
+			try {
+				let userEmailToDelete = await EmailVerification.deleteMany(filter)
+                console.log("deleted email verification entry: ", userEmailToDelete)
+                return userEmailToDelete
+			} catch (error) {
+				return error
+			}
+		} else {
+			return  "no email recieved"
+		}
+	}	else {
+		return "email is not a string"
+	}	
+}
+
 async function handleDeleteRecipe(recipeId){
 	let filter = {id: recipeId}
     console.log("recipeId:", recipeId)
@@ -351,13 +447,16 @@ async function handlePostRecipeUpsert(filter, update) {
 async function handleUserLogin(res, body) {
 	
 	if(typeof body === 'object' && body.email && body.password ) {
-		const user =  await User.find({email: body.email}, "username password")
+		const user =  await User.find({email: body.email}, "username password email verified.email")
 		console.log("handleUserLogin, user: ", user)
-		console.log("handleUserLogin, body.password", body.password)
-		if(user.length > 0) {
+		console.log("handleUserLogin, body.password:", body.password)
+		user[0].verified.email ? console.log("handleUserLogin, user.verified.email:", user[0].verified.email) : console.log("email not verified")
+		
+		if(user.length > 0 && user[0].verified.email === true) {
 				if (!await bcrypt.compare(body.password, user[0].password)) return res.status(400).json({message: "passwords dont match", success: false})
 				console.log(`username: ${user[0].username}`)
-				const tokenBody = {username: user[0].username}
+				const tokenBody = {username: user[0].username, email: user[0].email}
+				console.log("tokenBody: ", tokenBody)
 				const accessToken =	generateAccessToken(tokenBody)
 				const refreshToken = jwt.sign(tokenBody, process.env.REFRESH_TOKEN_SECRET)
 				tokenBody.refreshToken = refreshToken
@@ -375,7 +474,7 @@ async function handleUserLogin(res, body) {
 					console.log(`successful refreshTokenSave with payload: ${refreshTokenObject}`)
 					})
 			
-				console.log(`${body.email} ${user[0].username} authenticated`)
+			
 				let cookieOptions = {}
 				if(process.env.NODE_ENV !== 'production') {
 					cookieOptions = {
@@ -393,20 +492,34 @@ async function handleUserLogin(res, body) {
 						secure: true
 						}
 				}
+				console.log(`${body.email} ${user[0].username} authenticated`)
 				return res
 					.status(200)
 					.cookie('access_token', 'Bearer ' + accessToken, cookieOptions)
 					.json({messgae: `user  ${body.email} authenticated`, success: true})
 					
 			
-		} else if (!await User.exists({email: body.email})===false) { 
+		} 
+		else if (user.length > 0 && user[0].verified.email !== true) {
+			return res.status(403).json(
+				{
+					message: `user  ${body.email} has not verified-email`,
+					success: false, 
+					redirect: {
+						email: body.email, 
+						location: {pathname: '/verify-email'}
+					}
+				}
+			)
+		}
+		else if (!await User.exists({email: body.email})===false) { 
 			console.log(`email ${body.email} was submitted to the server cant find that user's email`)
 			return res.status(404).json({message: "email doesn't exists!", success: false, reason: "cannot find user"})
+		}
+		else {
+			return res.status(400).json({message: "handleUserLogin() error: there is a problem with the user object datatype or a missing property (username, password, email, etc)", success: false})
+		}
 	}
-	else {
-		return res.status(400).json({message: "handleUserLogin() error: there is a problem with the user object datatype or a missing property (username, password, email, etc)", success: false})
-	}
-}
 }
 
 async function handleUserLogout(res, username) {
@@ -416,12 +529,12 @@ async function handleUserLogout(res, username) {
 					return res.send(err)
 				}
 		})
-	return res.status(200).json({message: tokenDelete, success: true})
-	console.log(user.username + " refreshToken(s) removed from collection")
 	
+	console.log(user.username + " refreshToken(s) removed from collection")
+	return res.status(200).json({message: tokenDelete, success: true})
 }
 
-function authenticateToken(req, res, next) {
+ function authenticateToken(req, res, next) {
 	//console.log("req", req)
 	console.log("cookies", req.cookies.access_token)
 	if(req.cookies.access_token) {
@@ -441,6 +554,7 @@ function authenticateToken(req, res, next) {
 					return res.status(403).json({message: "Token no longer valid"})
 				} else {
 					req.user = user
+					console.log("authenticateToken user:", user)
 					req.isAutheticated = true
 					next()
 				}
