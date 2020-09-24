@@ -107,7 +107,7 @@ app.delete('/recipe-delete', async (req, res, next) => {
     console.log(typeof req.body.id)
 	res.json(await handleDeleteRecipe( req.body.id))
 })
-app.post('/api/v1/users/verify-email', limiter((30 * 1000), 2),  async (req, res, next) => {
+app.post('/api/v1/users/verify-email', limiter((24*60*60 * 1000), 200),  async (req, res, next) => {
 	try{
 		console.log("creating OTP")
 		OTP = createOTP()
@@ -201,17 +201,25 @@ app.post('/api/v1/users/create', async (req, res, next) => {
 	console.log("request body: ", req.body)
 	console.log("request password:", req.body.password)
 	const yourPassword = req.body.password
+	if(yourPassword === '' || typeof yourPassword !== 'string' )
+	{
+		return res.status(400).json({success: false, message: "password is empty"})
+	}
+	else if (!yourPassword.match(/((?=.*\d)(?=.*[a-z])(?=.*[A-Z])(?=.*[\W]).{12,64})/)) {
+		return res.status(400).json({success: false, message: "password strength is too weak"})
+	}
+
 	try {
 		const salt = await bcrypt.genSalt()
 		const hashedPassword = await bcrypt.hash(yourPassword, salt)
 		// console.log(salt)
 		// console.log(hashedPassword)
-		let newUser = {...req.body, id: uuidv4(), password: hashedPassword, updated: Date.now() }
+		let newUser = {...req.body, id: uuidv4(), password: hashedPassword, verified: { email: false, phone: false }, updated: Date.now() }
 		await createUser(res, newUser)
 	}
 	catch (err) {
 			console.log(err)
-			res.send(500).json({message: "server couldn't process your request", success: false})
+			res.send(500).json({message: "server couldn't process your create user srequest", success: false})
 		}
 })
 
@@ -445,65 +453,91 @@ async function handlePostRecipeUpsert(filter, update) {
 //login
 
 async function handleUserLogin(res, body) {
-	
-	if(typeof body === 'object' && body.email && body.password ) {
-		const user =  await User.find({email: body.email}, "username password email verified.email")
-		console.log("handleUserLogin, user: ", user)
-		console.log("handleUserLogin, body.password:", body.password)
-		user[0].verified.email ? console.log("handleUserLogin, user.verified.email:", user[0].verified.email) : console.log("email not verified")
+	console.log("body", body)
+	console.log('body.hasOwnProperty("email")', body.hasOwnProperty("email"))
+	console.log('body.hasOwnProperty("password")', body.hasOwnProperty("password"))
+	if(typeof body === 'object' && body.hasOwnProperty("email") && body.hasOwnProperty("password") ) {
+		let user
+		try {user = await User.find({email: body.email}, "username password email verified", (err, doc) => {
+			console.log("doc: ", doc)
+			if(err){
+				return res.status(400).json({message: "error finding user document", success: false})
+			}
+			if (doc.length < 1) {return res.status(404).json({
+				message: "user email doesn't exists! Please Register",
+				success: false,
+				reason: "cannot find user"
+			})}
+			else if (doc.length > 1) {return res.status(400).json({
+				message: "error: multiple emails found --not allowed! please contact administrator",
+				success: false,
+				redirect: {
+					email: doc.email,
+					location: {pathname: '/registration'}
+				}
+			})}
+			else if (!doc[0].verified.email) return res.status(400).json({
+				message: `${doc[0].email}  not verified`,
+				success: false, 
+				redirect: {
+					email: doc[0].email, 
+					location: {pathname: '/verify-email'}
+				}
+			})
+		})} catch (err) { return err }
+		console.log("user:", user)
+		if(user && user.length > 0 && user[0].verified && user[0].verified.email) {
+			if (!await bcrypt.compare(body.password, user[0].password)) return res.status(400).json({message: "passwords dont match", success: false})
+			console.log(`username: ${user[0].username}`)
+			const tokenBody = {username: user[0].username, email: user[0].email}
+			console.log("tokenBody: ", tokenBody)
+			const accessToken =	generateAccessToken(tokenBody)
+			const refreshToken = jwt.sign(tokenBody, process.env.REFRESH_TOKEN_SECRET)
+			tokenBody.refreshToken = refreshToken
+			tokenBody.id = uuidv4()
+			//PUSH REFRESH TOKEN TO DATABASE 
+			const refreshTokenObject = new RefreshToken(tokenBody)
+			//this will finish saving after the response is sent back to the requester
+			payload =  refreshTokenObject.save(function (err) {
+				if(err) { 
+					console.log(err) 
+					return res.send(err)
+				}
+				console.log(user[0].username + " refreshToken saved to collection")
+				//saved!
+				console.log(`successful refreshTokenSave with payload: ${refreshTokenObject}`)
+				})
 		
-		if(user.length > 0 && user[0].verified.email === true) {
-				if (!await bcrypt.compare(body.password, user[0].password)) return res.status(400).json({message: "passwords dont match", success: false})
-				console.log(`username: ${user[0].username}`)
-				const tokenBody = {username: user[0].username, email: user[0].email}
-				console.log("tokenBody: ", tokenBody)
-				const accessToken =	generateAccessToken(tokenBody)
-				const refreshToken = jwt.sign(tokenBody, process.env.REFRESH_TOKEN_SECRET)
-				tokenBody.refreshToken = refreshToken
-				tokenBody.id = uuidv4()
-				//PUSH REFRESH TOKEN TO DATABASE 
-				const refreshTokenObject = new RefreshToken(tokenBody)
-				//this will finish saving after the response is sent back to the requester
-				payload =  refreshTokenObject.save(function (err) {
-					if(err) { 
-						console.log(err) 
-						return res.send(err)
-					}
-					console.log(user[0].username + " refreshToken saved to collection")
-					//saved!
-					console.log(`successful refreshTokenSave with payload: ${refreshTokenObject}`)
-					})
-			
-			
-				let cookieOptions = {}
-				if(process.env.NODE_ENV !== 'production') {
-					cookieOptions = {
+		
+			let cookieOptions = {}
+			if(process.env.NODE_ENV !== 'production') {
+				cookieOptions = {
+				maxAge: expiryDate,
+				// httpOnly: process.env.IS_HTTP_RES_COOKIE_HTTP_ONLY,
+				// sameSite: 'None',
+				// secure: process.env.IS_HTTP_RES_COOKIE_SECURE
+				}
+			}
+			else {
+				cookieOptions = {
 					maxAge: expiryDate,
-					// httpOnly: process.env.IS_HTTP_RES_COOKIE_HTTP_ONLY,
-					// sameSite: 'None',
-					// secure: process.env.IS_HTTP_RES_COOKIE_SECURE
+					httpOnly: true,
+					sameSite: 'None',
+					secure: true
 					}
-				}
-				else {
-					cookieOptions = {
-						maxAge: expiryDate,
-						httpOnly: true,
-						sameSite: 'None',
-						secure: true
-						}
-				}
-				console.log(`${body.email} ${user[0].username} authenticated`)
-				return res
-					.status(200)
-					.cookie('access_token', 'Bearer ' + accessToken, cookieOptions)
-					.json({messgae: `user  ${body.email} authenticated`, success: true})
+			}
+			console.log(`${body.email} ${user[0].username} authenticated`)
+			return res
+				.status(200)
+				.cookie('access_token', 'Bearer ' + accessToken, cookieOptions)
+				.json({messgae: `user  ${body.email} authenticated`, success: true})
 					
 			
 		} 
 		else if (user.length > 0 && user[0].verified.email !== true) {
 			return res.status(403).json(
 				{
-					message: `user  ${body.email} has not verified-email`,
+					message: `${body.email}  not verified`,
 					success: false, 
 					redirect: {
 						email: body.email, 
@@ -512,13 +546,13 @@ async function handleUserLogin(res, body) {
 				}
 			)
 		}
-		else if (!await User.exists({email: body.email})===false) { 
-			console.log(`email ${body.email} was submitted to the server cant find that user's email`)
-			return res.status(404).json({message: "email doesn't exists!", success: false, reason: "cannot find user"})
-		}
 		else {
 			return res.status(400).json({message: "handleUserLogin() error: there is a problem with the user object datatype or a missing property (username, password, email, etc)", success: false})
 		}
+		
+	}
+	else {
+		return res.status(400).json({message: "handleUserLogin() error: there is a problem with the user object datatype or a missing property (username, password, email, etc)", success: false})
 	}
 }
 

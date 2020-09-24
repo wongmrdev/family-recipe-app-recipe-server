@@ -9,7 +9,9 @@ const usersSchema = new mongoose.Schema({
     updated: { type: Date, default: Date.now() },
     country: { type: String, required: false, default: "" },
     email: { type: String, required: true, default: ""},
-    familyMembers: {type: [String], required: true},
+    familyMembers: [
+        {type: String, required: false}
+    ],
     phoneNumber: {type: String, required: false, default: ""},
     verified: {
             email: {type: Boolean, required: true, default: false}, 

@@ -23,8 +23,8 @@ const recipesSchema = new mongoose.Schema({
         amount: {type: String, required: false, default: ""}
       }
     ],
-    updated: { type: Date, default: Date.now() }
-  
+    updated: { type: Date, default: Date.now() },
+    likes: { type: Number, default: 1 }
 })
 //export model(<name of Model constructor>, <schema data definition>, <collection to save to>)
 module.exports = mongoose.model('Recipe', recipesSchema, 'recipes')
