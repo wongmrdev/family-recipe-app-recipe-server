@@ -197,7 +197,7 @@ app.post('/api/v1/users/verification-code', limiter((10 * 60 * 1000), 20), speed
 	}
 })
 
-app.post('/api/v1/users/create', async (req, res, next) => {
+app.post('/api/v1/users/create', limiter(( 60 * 1000), 5), speedLimiter(10 * 60 * 1000, 5, 500), async (req, res, next) => {
 	console.log("request body: ", req.body)
 	console.log("request password:", req.body.password)
 	const yourPassword = req.body.password
@@ -239,7 +239,7 @@ app.delete('/api/v1/users/delete', async (req, res, next) => {
 		
 )
 
-app.post('/api/v1/users/login', async (req, res, next) => {
+app.post('/api/v1/users/login', limiter(( 60 * 1000), 5), speedLimiter(10 * 60 * 1000, 5, 500), async (req, res, next) => {
 	try {
 		if(typeof req.body.email === 'string' && req.body.email !== '' 	
 			&& typeof req.body.password === 'string' && req.body.password !== '') {
