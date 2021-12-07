@@ -1,5 +1,5 @@
 
-console.log("started express recipeServer.js")
+console.log("started express recipe backend api server, server.js")
 if (process.env.NODE_ENV !== 'production') {
 	require('dotenv').config()
 }
@@ -30,9 +30,9 @@ function speedLimiter(windowMs, delayAfter, delayMs) {
 }
 
 //Other options to improve performance is to Cache Results 
-//Other options to improce security is to limit requests based on username, API KEY, or JWT
+//Other options to improve security is to limit requests based on username, API KEY, or JWT
 const app = express();
-const bodyParser = require('body-parser');
+//const bodyParser = require('body-parser');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 var helmet = require('helmet');
@@ -75,11 +75,11 @@ db.once('open', function () {
 })
 
 //routes
-app.get('/', (req, res) => {
+app.get('/', limiter((10 * 60 * 1000), 600), speedLimiter(10 * 60 * 1000, 100, 500), (req, res) => {
 	res.send('You have reached the server backend, are you looking for <a href="https://famrep.herokuapp.com">https://famrep.herokuapp.com</a> ?')
 })
 
-app.get('/recipes', authenticateToken, async (req, res) => {
+app.get('/recipes', limiter((10 * 60 * 1000), 600), speedLimiter(10 * 60 * 1000, 100, 500), authenticateToken, async (req, res) => {
 	console.log("cookies: ", req.cookies)
 	//req.user available from authenticateToken middleware
 	if (req.isAutheticated == true) {
@@ -205,7 +205,7 @@ app.post('/api/v1/users/create', limiter((60 * 1000), 5), speedLimiter(10 * 60 *
 		return res.status(400).json({ success: false, message: "password is empty" })
 	}
 	else if (!yourPassword.match(/((?=.*\d)(?=.*[a-z])(?=.*[A-Z])(?=.*[\W]).{12,64})/)) {
-		return res.status(400).json({ success: false, message: "password strength is too weak" })
+		return res.status(400).json({ success: false, message: "password strength is too weak, passwords must be 12 characters long, include at least 1 of the following: lowercase letter, uppercase letter, number and symbol." })
 	}
 
 	try {
@@ -238,7 +238,7 @@ app.delete('/api/v1/users/delete', async (req, res, next) => {
 
 )
 
-app.post('/api/v1/users/login', limiter((60 * 1000), 5), speedLimiter(10 * 60 * 1000, 5, 500), async (req, res, next) => {
+app.post('/api/v1/users/login', limiter((60 * 1000), 5), speedLimiter(10 * 60 * 1000, 10, 500), async (req, res, next) => {
 	try {
 		if (typeof req.body.email === 'string' && req.body.email !== ''
 			&& typeof req.body.password === 'string' && req.body.password !== '') {
@@ -615,4 +615,4 @@ function handleIsRefreshTokenValid(res, refreshToken) {
 	return true
 	next()
 }
-app.listen(process.env.PORT || 3000)
+app.listen(process.env.PORT || 3000) && console.log(`listening on ${process.env.PORT || 3000}`)
